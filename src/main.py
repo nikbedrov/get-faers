@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 plt.style.use('fivethirtyeight')
 plt.rcParams["figure.figsize"] = (4, 3)
 import requests
-
+from urllib.parse import quote
 # rate limiting is important to avoid accidental service abuse of the OpenFDA API provider
 from ratelimit import limits, sleep_and_retry
 
@@ -50,7 +50,15 @@ def api_meta():
     return y['properties']
 
 
-df = pd.DataFrame(call_api({"count": "patient.drug.activesubstance.activesubstancename.exact"}))
+drugname = "Nexletol"
+
+
+
+#GET A - all cases for drug + event 
+df = pd.DataFrame(call_api({
+    "count": "patient.drug.medicinalproduct.exact",
+    'search':"patient.drug.medicinalproduct:{}".format(drugname)
+    }))
 df.plot.line('term', 'count', figsize=(5,3))
 plt.xlabel("drugs")
 plt.ylabel("reports")
@@ -62,50 +70,60 @@ df[0:10].plot.barh('term', 'count')
 plt.ylabel("drugs")
 plt.xlabel("reports")
 
+for index, value in enumerate(df[0:10]['count']):
+    plt.text(value, index,
+             str(value))
+
 plt.show()
 
+drug_event_A = df
 
-from wordcloud import WordCloud
-
-def show_wordcount(words, background="black", color="viridis"):
-    wc = WordCloud(
-        background_color=background,
-        max_words=50,
-        max_font_size=30,colormap=color
-    )
-    image = wc.generate_from_frequencies(words)
-
-    plt.figure(figsize=(10,6))
-    plt.imshow(image, interpolation="bilinear")
-    plt.axis("off")
-    plt.show()
-
-
-counts = call_api({
-    "count": "patient.drug.activesubstance.activesubstancename.exact"})
-words = { d['term'].capitalize(): d['count'] for d in counts }
-show_wordcount(words)
-
-
-def get_trend_for_reaction(reaction):
-    df = pd.DataFrame(
-        call_api({
-            'count':'receivedate',
-            'search': "receivedate:[20040101 TO 20240630] AND patient.reaction.reactionmeddrapt.exact: {}".format(reaction.upper()
-            )}))
-    df.index = pd.to_datetime(df.time)
-    df = df.drop('time', axis=1).resample("y").sum().rename(
-        columns={"count": reaction.capitalize()}
-    )
-    return df
-
-reactions = ['death', 'pain', 'dyspnoea']
-df = pd.concat([get_trend_for_reaction(x) for x in reactions], axis=1)
-df.plot(style='o-', figsize=(5,3))
+#GET AB - all cases for drug
+df = pd.DataFrame(call_api({
+    "count": "patient.reaction.reactionmeddrapt.exact",
+    'search':"patient.drug.medicinalproduct:{}".format("Nexletol")
+    }))
+df.plot.line('term', 'count', figsize=(5,3))
+plt.xlabel("drugs")
+plt.ylabel("reports")
+plt.gca().axes.get_xaxis().set_ticks([])
+plt.gca().get_legend().remove()
 plt.show()
 
+df[0:10].plot.barh('term', 'count')
+plt.ylabel("drugs")
+plt.xlabel("reports")
 
+for index, value in enumerate(df[0:10]['count']):
+    plt.text(value, index,
+             str(value))
 
+plt.show()
+
+drug_AB = df
+
+reactions = df['term'].values
+reactions_counts = []
+
+def get_counts_for_reaction(reaction):
+    """Returns dataframe with yearly tally of event reports for a given reaction"""
+    aes_df = pd.DataFrame(call_api({
+            "count": "patient.reaction.reactionmeddrapt.exact",
+            'search':"patient.reaction.reactionmeddrapt.exact:{}".format(reaction)
+    }))
+ 
+    for item in aes_df.iterrows():
+        if item[1]["term"].lower() == reaction.lower():
+            reactions_counts.append([reaction, item[1]["count"]])
+    
+    return aes_df
+
+for reaction in reactions:
+    reaction = reaction.replace("^", "").replace("/", " ") 
+    get_counts_for_reaction(reaction)
+    
+
+drug_AC = reactions_counts
 
 
 print("debug")
