@@ -48,9 +48,9 @@ def call_api_raw_result(params):
         params = {}
     params['limit'] = params.get('limit', 1000)
     response = requests.get(OPENFDA_API, params=params)
-
     if response.status_code != 200:
         raise Exception('API response: {}'.format(response.status_code))
+
     return response.json()
 
 
@@ -73,19 +73,77 @@ def api_meta():
 
 ######### Drug Name ##########
 #drugname = "NEXLETOL"
-drugname = "NEXLIZET"
+#drugname = "NEXLIZET"
+#drugname = "AKTEN"
+
+drugname = 'exenatide'
+#drugname = 'LIRAGLUTIDE'
+#drugname = 'LIXISENATIDE'
+#drugname = 'ALBIGLUTIDE'
+#drugname = 'DULAGLUTIDE'
+#drugname = 'SEMAGLUTIDE'
+#drugname = 'BEINAGLUTIDE'
 
 
 faers_all_cases = call_api_raw_result({"limit": 1})['meta']['results']['total']
 
 
-#GET AB - all cases for drug
-df = pd.DataFrame(call_api({
-    "count": "patient.drug.medicinalproduct.exact",
-    'search':'patient.drug.medicinalproduct:"{}"'.format(drugname)
-    }))
 
-drug_AB = df[df["term"] == drugname]["count"].values[0]
+
+
+
+
+
+
+
+
+
+#If necessary add the time frame - 'search':'receivedate:[20040101 TO 20200101] AND ...'
+#GET AB - all cases for drug
+
+# df = pd.DataFrame(call_api({
+#     "count": "patient.drug.medicinalproduct.exact",
+#     'search':'patient.drug.medicinalproduct:"{}"'.format(drugname)
+#     }))
+
+#Break down the data by year due to api limits (1000 records per call)
+start_year = 2005
+end_year = 2025
+
+all_data = []
+
+for year in range(start_year, end_year + 1):
+    #print(year)
+    data = call_api({
+        "count": "patient.drug.openfda.generic_name.exact",
+        'search':f'patient.drug.openfda.generic_name:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
+    })
+    
+    all_data.extend(data)
+
+df = pd.DataFrame(all_data)
+
+
+#drug_AB = df[df["term"] == drugname]["count"].values[0]
+
+test_new_AB_count = df[df['term'].str.contains(drugname, case=False, na=False)]['count'].sum()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #GET A - all cases for drug + event 
 df = pd.DataFrame(call_api({
@@ -135,3 +193,12 @@ stats_df.to_csv(f"FAERS_{drugname}.csv", index=False)
 
 
 print("debug")
+
+
+
+
+
+#Sort out this script 
+#1. Make the api request type optional - medicinal product or generic name
+#2. Make the count for the AB iterate all years.
+#3. Cleanup the code and make it reusable.
