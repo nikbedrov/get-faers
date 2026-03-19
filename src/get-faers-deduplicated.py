@@ -91,12 +91,12 @@ def get_all_cases_for_drug_per_year(drugname, year, drugname_type=DrugNameType.M
     drugname = drugname.replace(" ", "+")
     if drugname_type == DrugNameType.MEDICINAL_PRODUCT:
         return call_api({
-            "count": "patient.drug.medicinalproduct",
+            "count": "patient.drug.medicinalproduct.exact",
             'search':f'patient.drug.medicinalproduct:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     elif drugname_type == DrugNameType.GENERIC_NAME:
         return call_api({
-            "count": "patient.drug.openfda.generic_name",
+            "count": "patient.drug.openfda.generic_name.exact",
             'search':f'patient.drug.openfda.generic_name:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     else:
@@ -107,12 +107,12 @@ def get_drug_event_count_A_per_year(drugname, year, drugname_type=DrugNameType.M
     drugname = drugname.replace(" ", "+")
     if drugname_type == DrugNameType.MEDICINAL_PRODUCT:
         return call_api({
-            "count": "patient.reaction.reactionmeddrapt",
+            "count": "patient.reaction.reactionmeddrapt.exact",
             'search':f'patient.drug.medicinalproduct:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     elif drugname_type == DrugNameType.GENERIC_NAME:
         return call_api({
-            "count": "patient.reaction.reactionmeddrapt",
+            "count": "patient.reaction.reactionmeddrapt.exact",
             'search':f'patient.drug.openfda.generic_name:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     else:
@@ -165,7 +165,7 @@ def get_all_cases_for_drug_AB(drugname, start_year, end_year, drugname_type=Drug
 def get_counts_for_reaction(reaction):
         """Returns dataframe with yearly tally of event reports for a given reaction"""
         aes_df = pd.DataFrame(call_api({
-                "count": "patient.reaction.reactionmeddrapt",
+                "count": "patient.reaction.reactionmeddrapt.exact",
                 'search':'patient.reaction.reactionmeddrapt:"{}"'.format(reaction.replace("^", " ").replace("/", " "))
         }))
     
@@ -178,19 +178,74 @@ def get_counts_for_reaction(reaction):
 start_year = 2004
 end_year = 2026
 #drug_names = ["exenatide","liraglutide","lixisenatide","albiglutide","dulaglutide","semaglutide","beinaglutide"]
-drug_names = ["nexletol", "nexlizet"]
+#drug_names = ["nexletol", "nexlizet"]
 #drug_names = ["rezdiffra"]
 #drug_names = ["akten"]
 #drug_names = ["zunveyl"]
 #drug_names = ["soltamox"]
-#drug_names = ["tamoxifen citrate"]
+drug_names = ["tamoxifen citrate"]
 #drug_names = ["zioptan"]
 #drug_names = ["Hydroxyurea"]
 drug_type = DrugNameType.MEDICINAL_PRODUCT
 
+
+
+#Tests
+
+def deduplicate_by_caseid_fda_dt(df):
+    """
+    Deduplicate FAERS data:
+    - Parse FDA_DT to datetime (latest receive date).
+    - Per CASEID, keep row with max FDA_DT (most recent version).
+    - Ties broken by max PRIMARYID.
+    """
+    df['fda_dt_parsed'] = pd.to_datetime(df['fda_dt'], errors='coerce')
+    df = df.dropna(subset=['fda_dt_parsed'])  # Drop invalid dates
+    
+    # Sort descending by FDA_DT then PRIMARYID (numeric)
+    df['primaryid_num'] = pd.to_numeric(df['primaryid'], errors='coerce')
+    df_sorted = df.sort_values(['caseid', 'fda_dt_parsed', 'primaryid_num'], ascending=[True, False, False])
+    
+    # Deduplicate: keep first (latest) per CASEID
+    dedup_df = df_sorted.drop_duplicates(subset=['caseid'], keep='first')
+    
+    # Cleanup
+    dedup_df.drop(['fda_dt_parsed', 'primaryid_num'], axis=1, inplace=True)
+    return dedup_df
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     
     all_cases_ABCD = call_api_raw_result({"limit": 1})['meta']['results']['total']
+
+    result = call_api({
+            'search':f'patient.drug.medicinalproduct:"soltamox" AND receivedate:[20230101 TO 20231231]'
+        })
+
+
+
+    demo_df = pd.json_normalize(result)
+
+    dedupe = deduplicate_by_caseid_fda_dt(demo_df)
+
+
+
+
+
+
+
+
+
+    
 
     for drug_name in drug_names:
 
