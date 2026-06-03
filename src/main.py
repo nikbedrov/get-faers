@@ -10,14 +10,20 @@ from ratelimit import limits, sleep_and_retry
 from munch import Munch
 from enum import Enum
 from collections import defaultdict
+from dotenv import load_dotenv
+import os
 
 #FDA API constants
 OPENFDA_API = "https://api.fda.gov/drug/event.json"
 OPENFDA_METADATA_YAML = "https://open.fda.gov/fields/drugevent.yaml"
 
+load_dotenv()
+# Get API key from environment variable (set this securely, e.g., via 'set OPENFDA_API_KEY=your_key_here' in terminal)
+API_KEY = os.getenv('OPENFDA_API_KEY')
+
 #FDA API functions
 @sleep_and_retry
-@limits(calls=40, period=60)
+@limits(calls=240, period=60)  # Increased rate limit for API key usage
 def call_api(params):
     """
     OpenFDA API call. Respects rate limit. Overrides default data limit
@@ -31,6 +37,8 @@ def call_api(params):
     if not params:
         params = {}
     params['limit'] = params.get('limit', 1000)
+    if API_KEY:
+        params['api_key'] = API_KEY
     response = requests.get(OPENFDA_API, params=params)
 
     if response.status_code == 404:
@@ -43,7 +51,7 @@ def call_api(params):
 
 #Exact copy of above without the last part ['results']
 @sleep_and_retry
-@limits(calls=40, period=60)
+@limits(calls=240, period=60)  # Increased rate limit for API key usage
 def call_api_raw_result(params):
     """
     OpenFDA API call. Respects rate limit. Overrides default data limit
@@ -57,6 +65,8 @@ def call_api_raw_result(params):
     if not params:
         params = {}
     params['limit'] = params.get('limit', 1000)
+    if API_KEY:
+        params['api_key'] = API_KEY
     response = requests.get(OPENFDA_API, params=params)
     if response.status_code != 200:
         raise Exception('API response: {}'.format(response.status_code))
@@ -91,12 +101,12 @@ def get_all_cases_for_drug_per_year(drugname, year, drugname_type=DrugNameType.M
     drugname = drugname.replace(" ", "+")
     if drugname_type == DrugNameType.MEDICINAL_PRODUCT:
         return call_api({
-            "count": "patient.drug.medicinalproduct",
+            "count": "patient.drug.medicinalproduct.exact",
             'search':f'patient.drug.medicinalproduct:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     elif drugname_type == DrugNameType.GENERIC_NAME:
         return call_api({
-            "count": "patient.drug.openfda.generic_name",
+            "count": "patient.drug.openfda.generic_name.exact",
             'search':f'patient.drug.openfda.generic_name:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     else:
@@ -107,12 +117,12 @@ def get_drug_event_count_A_per_year(drugname, year, drugname_type=DrugNameType.M
     drugname = drugname.replace(" ", "+")
     if drugname_type == DrugNameType.MEDICINAL_PRODUCT:
         return call_api({
-            "count": "patient.reaction.reactionmeddrapt",
+            "count": "patient.reaction.reactionmeddrapt.exact",
             'search':f'patient.drug.medicinalproduct:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     elif drugname_type == DrugNameType.GENERIC_NAME:
         return call_api({
-            "count": "patient.reaction.reactionmeddrapt",
+            "count": "patient.reaction.reactionmeddrapt.exact",
             'search':f'patient.drug.openfda.generic_name:"{drugname}" AND receivedate:[{year}0101 TO {year}1231]'
         })
     else:
@@ -165,7 +175,7 @@ def get_all_cases_for_drug_AB(drugname, start_year, end_year, drugname_type=Drug
 def get_counts_for_reaction(reaction):
         """Returns dataframe with yearly tally of event reports for a given reaction"""
         aes_df = pd.DataFrame(call_api({
-                "count": "patient.reaction.reactionmeddrapt",
+                "count": "patient.reaction.reactionmeddrapt.exact",
                 'search':'patient.reaction.reactionmeddrapt:"{}"'.format(reaction.replace("^", " ").replace("/", " "))
         }))
     
@@ -178,14 +188,15 @@ def get_counts_for_reaction(reaction):
 start_year = 2004
 end_year = 2026
 #drug_names = ["exenatide","liraglutide","lixisenatide","albiglutide","dulaglutide","semaglutide","beinaglutide"]
-drug_names = ["nexletol", "nexlizet"]
+#drug_names = ["nexlizet","nexletol"]
 #drug_names = ["rezdiffra"]
-#drug_names = ["akten"]
+drug_names = ["akten"]
 #drug_names = ["zunveyl"]
 #drug_names = ["soltamox"]
 #drug_names = ["tamoxifen citrate"]
 #drug_names = ["zioptan"]
 #drug_names = ["Hydroxyurea"]
+#drug_names = ["Spironolactone"]
 drug_type = DrugNameType.MEDICINAL_PRODUCT
 
 if __name__ == "__main__":

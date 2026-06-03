@@ -126,7 +126,45 @@ def deduplicate_events(events: list) -> dict:
     
     return dict(event_counts)
 
-def calculate_statistics(event_counts: dict, total_reports: int) -> dict:
+
+def get_total_cases_all_events() -> int:
+    """Return total FAERS drug event cases (ABCD) from OpenFDA metadata."""
+    try:
+        data = call_fda_api({'limit': 1})
+        return data.get('meta', {}).get('results', {}).get('total', 0)
+    except Exception as e:
+        print(f"Error getting total cases for all events (ABCD): {e}")
+        return 0
+
+
+def get_total_cases_for_drug(drug_name: str) -> int:
+    """Return total reports for the target drug (AB)."""
+    query = f'patient.drug.openfda.generic_name:"{drug_name}" OR patient.drug.openfda.brand_name:"{drug_name}"'
+    try:
+        data = call_fda_api({'search': query, 'limit': 1})
+        return data.get('meta', {}).get('results', {}).get('total', 0)
+    except Exception as e:
+        print(f"Error getting total cases for drug '{drug_name}' (AB): {e}")
+        return 0
+
+
+def get_total_cases_for_event(event_name: str) -> int:
+    """Return total reports containing this event term (AC)."""
+    query = f'patient.reaction.reactionmeddrapt:"{event_name}"'
+    try:
+        result = call_fda_api({'search': query, 'count': 'patient.reaction.reactionmeddrapt.exact', 'limit': 1})
+        for item in result.get('results', []):
+            if item.get('term', '').lower() == event_name.lower():
+                return item.get('count', 0)
+        # Fallback: if exact match not found, use first count
+        if result.get('results'):
+            return result['results'][0].get('count', 0)
+    except Exception as e:
+        print(f"Error getting total cases for event '{event_name}' (AC): {e}")
+    return 0
+
+
+def calculate_statistics(event_counts: dict, drug_total_cases: int, all_total_cases: int, get_event_total_fn) -> dict:
     """
     Calculate pharmacovigilance statistics for each adverse event.
     
@@ -149,61 +187,61 @@ def calculate_statistics(event_counts: dict, total_reports: int) -> dict:
     # Total adverse events (combining all events)
     total_adverse_reports = sum(event_counts.values())
     
+    # for each reaction event, compute contingency table constants
     for event_name, event_count in event_counts.items():
-        # Reports with drug but WITHOUT this event
-        drug_no_event = total_reports - event_count
-        
-        # For expected calculations, we use the proportion of this event across all reports
-        # as a baseline for expected frequency
-        event_proportion = total_adverse_reports / total_reports if total_reports > 0 else 0
-        expected_count = total_reports * event_proportion if total_reports > 0 else 0
-        
-        # Avoid division by zero
+        A = event_count
+        AB = drug_total_cases
+        AC = get_event_total_fn(event_name)
+        ABCD = all_total_cases
+
+        B = max(AB - A, 0)
+        C = max(AC - A, 0)
+        D = max(ABCD - AB - AC + A, 0)
+
+        # For expected PRR calculation, use drug-focused reports
+        event_proportion = total_adverse_reports / AB if AB > 0 else 0
+        expected_count = AB * event_proportion if AB > 0 else 0
+
         if expected_count == 0:
             expected_count = 0.5
-        if drug_no_event == 0:
-            drug_no_event = 0.5
-            
-        # PRR Calculation
-        prr = event_count / expected_count if expected_count > 0 else 0
-        
-        # ROR Calculation (simplified for single drug)
-        # ROR = (a * d) / (b * c), where we approximate background rates
-        a = event_count  # Drug + Event
-        b = drug_no_event  # Drug + No Event
-        c = event_count * 0.1  # Estimated background + Event (rough estimate)
-        d = total_reports * 0.9  # Estimated background + No Event
-        
+
+        prr = A / expected_count if expected_count > 0 else 0
+
+        # ROR = (A * D) / (B * C) and avoid zeros
+        a = max(A, 1)
+        b = max(B, 1)
+        c = max(C, 1)
+        d = max(D, 1)
+
         ror = (a * d) / (b * c) if (b * c) > 0 else 0
-        
-        # Standard Error of log(ROR)
+
         se_log_ror = np.sqrt(1/a + 1/b + 1/c + 1/d) if all([a, b, c, d]) else 0
-        
-        # 95% Confidence Interval for ROR
         log_ror = np.log(ror) if ror > 0 else 0
         ci_lower = np.exp(log_ror - 1.96 * se_log_ror) if ror > 0 else 0
         ci_upper = np.exp(log_ror + 1.96 * se_log_ror) if ror > 0 else 0
-        
+
         # EBGM (Empirical Bayes Geometric Mean) - simplified calculation
-        # Uses a Poisson model approximation
         alpha = 0.5
         beta = 0.5
         try:
             from scipy.special import digamma
-            # More sophisticated EBGM calculation
             ebgm = np.exp((np.log(a + alpha) - np.log(b + c + beta)))
-        except:
-            # Simplified fallback
+        except Exception:
             ebgm = np.sqrt(a / expected_count) if expected_count > 0 else 0
-        
-        ebgm05 = ebgm * 0.05 if ebgm > 0 else 0  # 5th percentile approximation
-        
-        # Standard Error
+
+        ebgm05 = ebgm * 0.05 if ebgm > 0 else 0
         se = np.sqrt(1/a) if a > 0 else 0
-        
+
         statistics.append({
             'event': event_name.title(),
             'count': event_count,
+            'A': A,
+            'B': B,
+            'C': C,
+            'D': D,
+            'AB': AB,
+            'AC': AC,
+            'ABCD': ABCD,
             'prr': round(prr, 4),
             'ror': round(ror, 4),
             'ebgm05': round(ebgm05, 4),
@@ -260,11 +298,19 @@ def main():
         return
     
     print(f"Found {len(event_counts)} unique adverse events")
-    
+
+    print("\nFetching totals for A/B/C/D/AB/AC/ABCD...")
+    all_cases_abcd = get_total_cases_all_events()
+    drug_cases_ab = get_total_cases_for_drug(DRUG_NAME)
+
+    ac_cache = {}
+    def get_event_ac(event_name):
+        return ac_cache.setdefault(event_name.lower(), get_total_cases_for_event(event_name))
+
     # Calculate statistics
     print("\nCalculating pharmacovigilance statistics...")
-    statistics = calculate_statistics(event_counts, len(events))
-    
+    statistics = calculate_statistics(event_counts, drug_cases_ab, all_cases_abcd, get_event_ac)
+
     # Save to CSV
     print("\nSaving results...")
     save_to_csv(statistics, DRUG_NAME, OUTPUT_FILENAME)
